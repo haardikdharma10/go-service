@@ -1,12 +1,14 @@
-// Package svc contains the core scanning logic for the service.
+// Package svc contains the core logic for the service.
 package svc
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
+	"example/go-service/db"
 	"example/go-service/models"
 
 	"github.com/google/go-github/github"
@@ -16,7 +18,7 @@ import (
 // ScanRepository scans a GitHub repository for .json files and processes them.
 func ScanRepository(req models.ScanRequest) (models.ScanResult, error) {
 	tokenService := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: "<github-api-token-here>"},
+		&oauth2.Token{AccessToken: "<token>"},
 	)
 
 	tokenClient := oauth2.NewClient(context.Background(), tokenService)
@@ -51,6 +53,11 @@ func ScanRepository(req models.ScanRequest) (models.ScanResult, error) {
 		response.Payloads = append(response.Payloads, payloads...)
 	}
 
+	response, err = processAndStoreResults(response)
+	if err != nil {
+		return models.ScanResult{}, err
+	}
+
 	return response, nil
 }
 
@@ -81,4 +88,53 @@ func processFile(client *github.Client, owner, repo, path string) ([]models.Payl
 	}
 
 	return payloads, nil
+}
+
+func processAndStoreResults(response models.ScanResult) (models.ScanResult, error) {
+	dbConn := db.GetDB()
+	for _, payload := range response.Payloads {
+		payloadJSON, err := json.Marshal(payload.PayloadResult)
+		if err != nil {
+			log.Printf("Error marshaling payload: %v", err)
+			continue
+		}
+
+		scanResults, ok := payload.PayloadResult["scanResults"].(map[string]interface{})
+		if !ok {
+			log.Printf("Warning: scanResults not found or not a map in payload")
+			continue
+		}
+
+		vulnerabilities, ok := scanResults["vulnerabilities"].([]interface{})
+		if !ok {
+			log.Printf("Warning: vulnerabilities not found or not an array in scanResults")
+			continue
+		}
+
+		for _, vuln := range vulnerabilities {
+			vulnMap, ok := vuln.(map[string]interface{})
+			if !ok {
+				log.Printf("Warning: vulnerability is not a map")
+				continue
+			}
+
+			severity, ok := vulnMap["severity"].(string)
+			if !ok {
+				log.Printf("Warning: Severity not found or not a string in vulnerability")
+				severity = "UNKNOWN"
+			}
+
+			_, err = dbConn.Exec(
+				"INSERT INTO scans (source_file, scan_time, severity, payload) VALUES (?, ?, ?, ?)",
+				payload.SourceFile,
+				payload.ScanTime,
+				severity,
+				string(payloadJSON),
+			)
+			if err != nil {
+				log.Printf("Error storing scan result: %v", err)
+			}
+		}
+	}
+	return response, nil
 }

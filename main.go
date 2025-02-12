@@ -6,15 +6,24 @@ import (
 	"log"
 	"net/http"
 
+	"example/go-service/db"
 	"example/go-service/handlers"
 )
 
 func main() {
+	// Initialize db
+	err := db.InitDB()
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.GetDB().Close()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Root page of the service")
 	})
 	mux.HandleFunc("/scan", handlers.ScanHandler)
+	mux.HandleFunc("/query", handlers.QueryHandler)
 
 	server := &http.Server{
 		Addr:    ":8080",
