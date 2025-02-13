@@ -1,6 +1,7 @@
 {
     "name": "Go API Service",
     "dockerFile": "Dockerfile",
+    "context": "..",
     "forwardPorts": [8080],
     "postCreateCommand": "go mod download",
     "customizations": {
