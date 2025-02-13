@@ -37,3 +37,8 @@ func InitDB() error {
 func GetDB() *sql.DB {
 	return dbConn
 }
+
+// SetDB sets the package’s database connection to db.
+func SetDB(newDB *sql.DB) {
+	dbConn = newDB
+}
