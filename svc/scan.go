@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -16,12 +18,15 @@ import (
 	"golang.org/x/oauth2"
 )
 
-const numWorkers = 3
-
 // ScanRepository scans a GitHub repository for .json files and processes them.
 func ScanRepository(req models.ScanRequest) (models.ScanResult, error) {
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		return models.ScanResult{}, fmt.Errorf("GITHUB_TOKEN environment variable is not set")
+	}
+
 	tokenService := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: "<token>"},
+		&oauth2.Token{AccessToken: token},
 	)
 
 	tokenClient := oauth2.NewClient(context.Background(), tokenService)
@@ -60,6 +65,7 @@ func ScanRepository(req models.ScanRequest) (models.ScanResult, error) {
 
 	var wg sync.WaitGroup
 
+	numWorkers := getNumWorkers()
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go worker(client, req.Owner, req.Repo, jobs, resultsChan, &wg)
@@ -108,6 +114,18 @@ func worker(client *github.Client, owner, repo string, jobs <-chan *github.CodeR
 		log.Printf("Goroutine finished processing file %s at %s (took %v)", *job.Path, end.Format(time.RFC3339Nano), end.Sub(start))
 		results <- result
 	}
+}
+
+func getNumWorkers() int {
+	numWorkersStr := os.Getenv("NUM_WORKERS")
+	if numWorkersStr == "" {
+		return 3
+	}
+	numWorkers, err := strconv.Atoi(numWorkersStr)
+	if err != nil {
+		return 3
+	}
+	return numWorkers
 }
 
 func processFile(client *github.Client, owner, repo, path string) ([]models.Payload, error) {

@@ -37,6 +37,6 @@ type QueryResult struct {
 	FixedVersion   string   `json:"fixed_version"`
 	Description    string   `json:"description"`
 	PublishedDate  string   `json:"published_date"`
-	Link           string   `json:"link"`
+	Link           string   `json:"link,omitempty"`
 	RiskFactors    []string `json:"risk_factors"`
 }
