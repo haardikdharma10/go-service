@@ -3,11 +3,13 @@ package svc
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -169,6 +171,9 @@ func processFile(client *github.Client, owner, repo, path string) ([]models.Payl
 
 func processAndStoreResults(response models.ScanResult) (models.ScanResult, error) {
 	dbConn := db.GetDB()
+	batchSize := 10
+	batch := make([]interface{}, 0, batchSize*4)
+
 	for _, payload := range response.Payloads {
 		payloadJSON, err := json.Marshal(payload.PayloadResult)
 		if err != nil {
@@ -201,19 +206,42 @@ func processAndStoreResults(response models.ScanResult) (models.ScanResult, erro
 				severity = "UNKNOWN"
 			}
 
-			_, err = dbConn.Exec(
-				"INSERT INTO scans (source_file, scan_time, severity, payload) VALUES (?, ?, ?, ?)",
-				payload.SourceFile,
-				payload.ScanTime,
-				severity,
-				string(payloadJSON),
-			)
-			if err != nil {
-				log.Printf("Error storing scan result: %v", err)
+			batch = append(batch, payload.SourceFile, payload.ScanTime, severity, string(payloadJSON))
+
+			if len(batch) >= batchSize*4 {
+				log.Printf("Starting batch insert with %d records", len(batch)/4)
+				if err := executeBatchInsert(dbConn, batch); err != nil {
+					log.Printf("Error during batch insert: %v", err)
+				}
+				log.Printf("Completed batch insert of %d records", len(batch)/4)
+				batch = batch[:0] // Clear batch
+
 			}
 		}
 	}
+
+	// Insert remaining records
+	if len(batch) > 0 {
+		log.Printf("Starting final batch insert with %d records", len(batch)/4)
+		if err := executeBatchInsert(dbConn, batch); err != nil {
+			log.Printf("Error during final batch insert: %v", err)
+		}
+		log.Printf("Completed final batch insert of %d records", len(batch)/4)
+	}
+
 	return response, nil
+}
+
+func executeBatchInsert(dbConn *sql.DB, batch []interface{}) error {
+	placeholders := make([]string, 0, len(batch)/4)
+	for i := 0; i < len(batch); i += 4 {
+		placeholders = append(placeholders, "(?, ?, ?, ?)")
+	}
+	query := fmt.Sprintf("INSERT INTO scans (source_file, scan_time, severity, payload) VALUES %s",
+		strings.Join(placeholders, ","))
+
+	_, err := dbConn.Exec(query, batch...)
+	return err
 }
 
 func retryGitHubAPICall(attempt func() error) error {
